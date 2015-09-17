@@ -16,18 +16,8 @@ import qualified Data.MultiSet as MSet
 import Utilities
 
 import Control.Category
-import Data.Label
+import Control.Lens
 import Prelude hiding ((.), id)
-
-infixr 0 <|
-(<|) :: (a -> b) -> a -> b
-f <| x = f x
---same as $
---(b -> c) -> (a -> b) -> a -> c
-
-infixl 0 |>
-(|>) :: a -> (a -> b) -> b
-x |> f = f x
 
 type Color = Int
 type PlayerNum = Int
@@ -54,18 +44,15 @@ getHint h st =
 
 data State = State { _hands :: [[Card]], _deck :: [Card], _played :: [Int], _hints :: Int, _lives :: Int, _cardsLeft :: Int, _numPlayers :: Int, _turnNum :: Int, _currentPlayer :: Int, _discardPile :: MSet.MultiSet Card}
 
---http://brandon.si/code/a-brief-tutorial-introduction-to-fclabels-1-0/
-$(mkLabels [''Card, ''Hint, ''State])
+makeLenses ''Card
+makeLenses ''Hint
+makeLenses ''State
 
 --remove info about kth player and deck to give to kth player
 scrub :: Int -> State -> State 
-scrub k st = 
-  let 
-    --remove info about own hand
-    hands2 = listUpdate k [] (_hands st)
-    --remove info on deck
-  in
-    st {_hands = hands2, _deck = []}
+scrub k st =
+  st & (hands . ix k) .~ []
+     & (deck) .~ []
 
 class Player a where
 --(player who made move, move), [cards hinted], state of game, a
@@ -96,13 +83,13 @@ tryPlay card st =
     suit1 = _suit card
     playedUpTo = (_played st)!!suit1
   in
-    st |> doIfElse 
+    st & doIfElse 
 --if
             (suit1 == playedUpTo + 1) 
 --then
-            ((modify played) (listUpdateFun suit1 (+1)))
+            ((played . ix suit1) %~ (+1))
 --else
-            ((modify lives) (\x -> x - 1))
+            (lives %~ (\x -> x - 1))
 
 turn :: (Player a) => ([a], State) -> ([a], State)
 turn (ps,st) =
@@ -111,7 +98,7 @@ turn (ps,st) =
     curPlayer = ps!!n
     (curMove, curPlayer2) = getMove (scrub n st) curPlayer
 --try to draw a card
-    ps2 = listUpdate n curPlayer2 ps
+    ps2 = ps & ix n .~ curPlayer2
     topCard = (_deck st)!!0
 --    topCard = if _deck st == [] then Nothing else Just (deck!!0)
 --effects of move
@@ -119,17 +106,18 @@ turn (ps,st) =
       (case curMove of
         Discard k ->  
           --modify the hand by updating the kth card with the top card from the deck --actually not what we want.
-          st |> (modify hands) (listUpdate n (listUpdate k topCard ((_hands st)!!n)))
+          st & (hands . ix n . ix k) .~ topCard
           --delete top card from deck
-             |> (modify deck) (drop 1)
+             & (deck) %~ (drop 1)
           --add card to discard
-             |> (modify discardPile) (MSet.insert (getCard k n st))
+             & (discardPile) %~ (MSet.insert (getCard k n st))
         Play k -> 
-          st |> (modify hands) (listUpdate n (listUpdate k topCard ((_hands st)!!n)))
-             |> (modify deck) (drop 1)
-             |> (tryPlay (getCard k n st))
+          st & (hands . ix n . ix k) .~ topCard
+             & (deck) %~ (drop 1)
+             & (tryPlay (getCard k n st))
         GiveHint _ -> 
-          st |> (modify hints) (\x -> x - 1)) |> (modify turnNum (+1))
+          st & (hints) %~ (\x -> x - 1)
+             & (turnNum %~ (+1)))
 --assume hint is valid for now. NEED TO CHECK!
 --also subtlety: hint can't be empty!
     hintCards = 
