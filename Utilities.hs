@@ -23,6 +23,9 @@ import Debug.Trace
 doIf :: Bool -> (a -> a) -> (a -> a)
 doIf p f = (\x -> if p then f x else x)
 
+doIfCond :: (a -> Bool) -> (a -> a) -> (a -> a)
+doIfCond p f x = if p x then f x else x
+
 doIfElse :: Bool -> (a -> a) -> (a -> a) -> (a -> a)
 doIfElse p f g = (\x -> if p then f x else g x)
 
@@ -33,6 +36,12 @@ tryWithDefault::(a->Maybe b) -> b -> a -> b
 tryWithDefault f def x = 
   case (f x) of
     Nothing -> def
+    Just y -> y
+
+tryWithDefault2 :: (a->Maybe b) -> (a -> b) -> a -> b
+tryWithDefault2 f g x = 
+  case (f x) of
+    Nothing -> g x
     Just y -> y
 
 ifelselist:: [(Bool, a)] -> a -> a

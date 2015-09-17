@@ -42,7 +42,7 @@ getHint h st =
   in
     findIndices (ofClass (_cardtype h)) hand
 
-data State = State { _hands :: [[Card]], _deck :: [Card], _played :: [Int], _hints :: Int, _lives :: Int, _cardsLeft :: Int, _numPlayers :: Int, _turnNum :: Int, _currentPlayer :: Int, _discardPile :: MSet.MultiSet Card}
+data State = State { _hands :: [[Card]], _deck :: [Card], _played :: [Int], _hints :: Int, _lives :: Int, _cardsLeft :: Int, _numPlayers :: Int, _turnNum :: Int, _currentPlayer :: Int, _discardPile :: MSet.MultiSet Card, _countdown :: Int}
 
 makeLenses ''Card
 makeLenses ''Hint
@@ -72,10 +72,13 @@ startGame ps cards =
   let 
     (d, hs) = dealHands cards ps
   in
-    State {_hands = hs , _deck = d, _played = replicate ps 0, _hints = 8, _lives = 3, _cardsLeft = length d, _numPlayers = ps, _turnNum = 0, _currentPlayer = 0, _discardPile = MSet.empty}
+    State {_hands = hs , _deck = d, _played = replicate ps 0, _hints = 8, _lives = 3, _cardsLeft = length d, _numPlayers = ps, _turnNum = 0, _currentPlayer = 0, _discardPile = MSet.empty, _countdown = ps}
 
 getCard :: Int -> PlayerNum -> State -> Card
 getCard i pn st = ((_hands st)!!pn)!!i
+
+restoreHint :: State -> State
+restoreHint = hints %~ (doIfCond (<8) (+1))
 
 tryPlay :: Card -> State -> State
 tryPlay card st = 
@@ -87,10 +90,13 @@ tryPlay card st =
 --if
             (suit1 == playedUpTo + 1) 
 --then
-            ((played . ix suit1) %~ (+1))
+            --if finish a color, then restore 1 hint.
+            ((played . ix suit1) +~ 1 |>> doIf (_number card == 5) restoreHint)
 --else
-            (lives %~ (\x -> x - 1))
+            (lives -~ 1)
 
+
+--should be Except 
 turn :: (Player a) => ([a], State) -> ([a], State)
 turn (ps,st) =
   let 
@@ -99,31 +105,39 @@ turn (ps,st) =
     (curMove, curPlayer2) = getMove (scrub n st) curPlayer
 --try to draw a card
     ps2 = ps & ix n .~ curPlayer2
-    topCard = (_deck st)!!0
---    topCard = if _deck st == [] then Nothing else Just (deck!!0)
+--    topCard = st & (deck . ix 0) ^? 0
+    topCard = (_deck st) `mindex` 0
 --effects of move
-    newSt = 
-      (case curMove of
-        Discard k ->  
-          --modify the hand by updating the kth card with the top card from the deck --actually not what we want.
-          st & (hands . ix n . ix k) .~ topCard
-          --delete top card from deck
-             & (deck) %~ (drop 1)
+    removeAndDraw k s = s & (hands . ix n) %~ replaceSublist k (k+1) []
+                          & (case topCard of
+                              Just topC ->
+                                (hands . ix n) %~ (topC:) |>>
+                                deck %~ (drop 1)
+                              Nothing -> id)    
+    newSt = st & (case topCard of
+                   Nothing -> countdown -~ 1
+                   _ -> id)
+               & (case curMove of
+                   Discard k ->           
+                     removeAndDraw k
           --add card to discard
-             & (discardPile) %~ (MSet.insert (getCard k n st))
-        Play k -> 
-          st & (hands . ix n . ix k) .~ topCard
-             & (deck) %~ (drop 1)
-             & (tryPlay (getCard k n st))
-        GiveHint _ -> 
-          st & (hints) %~ (\x -> x - 1)
-             & (turnNum %~ (+1)))
---assume hint is valid for now. NEED TO CHECK!
---also subtlety: hint can't be empty!
+                      |>> (discardPile) %~ (MSet.insert (getCard k n st))
+                      |>> restoreHint
+                   Play k -> 
+                     removeAndDraw k
+                      |>> (tryPlay (getCard k n st))
+                   GiveHint _ -> 
+                     (hints) -~ 1
+                      |>> (turnNum +~ 1))
+--assume hint valid (nonempty) NEED TO FIX with error handling.
     hintCards = 
       case curMove of
         GiveHint h -> getHint h st
         _ -> []
+        {-
+    curMove' = case curMove of GiveHint _ -> case hintCards of [] -> InvalidMove
+                                                               _ -> curMove
+                               _ -> curMove-}
 --update players
     newPlayers = map (update (n,curMove) hintCards newSt) ps2
 -- (Int, Move) -> [Int] -> State -> a -> a
@@ -135,5 +149,5 @@ playHanabi players cards =
   let
     startState = startGame (length players) cards
   in
-    loopUntil (\(ps,st) -> _lives st <= 0 || length (_deck st) <= 0) turn (players, startState)
+    loopUntil (\(ps,st) -> _lives st <= 0 || _countdown st <= 0) turn (players, startState)
 --actually, we want to allow 1 more turn... 
